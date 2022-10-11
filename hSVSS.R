@@ -18,8 +18,8 @@ hSVSS <- function(iter = 1000, X, y, b1 = 1, b2 = 20, verbose=FALSE, scaling = T
   
   if (scaling)
     X = scale(X, scale = FALSE)
-  else
-    X <- scale(X)
+  # else
+  #   X <- scale(X)
   
   # if (scaling)
     Y_Star = scale(y, scale = FALSE) #larger variances in the Y 
@@ -43,21 +43,31 @@ hSVSS <- function(iter = 1000, X, y, b1 = 1, b2 = 20, verbose=FALSE, scaling = T
       c = c+10
     }
     
-    #Resample Beta   
+    #Resample Beta
+    if (n >= K) {   
     try(variance <-  solve(t(X) %*% X  + diag(1/big_gamma))) #more efficient, took out n 
     mu = variance %*% t(X) %*% Y_Star
     beta = MASS::mvrnorm(1, mu, sigma*variance) #added sigma multiplication
-    
-    # Resample lambda
-    for (k in  1:K) 
-    {
-        vj = 1/rgamma(1, 1, 1 + 1/lambda[k])
-        lambda[k] = 1/rgamma(1, 1, 1/vj + beta[k]^2/(2*tau*sigma))
+    } else {
+    u = rnorm(K, 0, sqrt(sigma * big_gamma))
+    delta = rnorm(n)
+    v = (X/sqrt(sigma)) %*% u + delta
+    GX = t(X * outer(rep.int(1L, nrow(X)), sqrt(sigma) * big_gamma))
+    ww = solve((X/sqrt(sigma)) %*% GX + diag(n), Y_Star/sqrt(sigma) - v)
+    beta = u + GX %*% ww
     }
+    # Resample lambda
+    # for (k in  1:K) 
+    loop_fun = function(lambda, beta) {
+        vj = 1/rgamma(1, 1, 1 + 1/lambda)
+        lambda = 1/rgamma(1, 1, 1/vj + beta^2/(2*tau))
+        return(lambda)
+    }
+    lambda = mapply(loop_fun, lambda, beta)
     
     #resample tau
     xi = 1/rgamma(1, 1, 1 + 1/tau)
-    tau = 1/rgamma(1, (K+1)/2, 1/xi + 1/(2*sigma)*sum(beta^2/lambda))
+    tau = 1/rgamma(1, (K+1)/2, 1/xi + 1/(2)*sum(beta^2/lambda))
     
     # Resample sigma
     sigma = 1/ (rgamma(1, shape = b1 + (n+K)/2 , rate = b2 + (1/2 ) * sum((Y_Star - (X %*% beta ))^2) + sum(beta^2/big_gamma)/2 ))

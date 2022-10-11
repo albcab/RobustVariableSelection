@@ -30,14 +30,14 @@ BVVA2 <- function(iter = 1000, X, y, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2 =
   # set some initial values 
   big_gamma = rep(1, K)
   tau = c(rep(1, K))
-  I = rep(0,K)
+  I = rep(1,K)
   
   w = runif(1)
   
   if (scaling)
     X = scale(X, scale = FALSE)
-  else
-    X <- scale(X)
+  # else
+  #   X <- scale(X)
   
   XX = t(X) %*% X
   
@@ -48,6 +48,7 @@ BVVA2 <- function(iter = 1000, X, y, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2 =
   # set space to store the results
   beta.store=matrix(rep(0,iter*K),nrow=iter)
   sigma.store = matrix(rep(0,iter*n),nrow=iter)
+  c.store = sigma.store
   I.store=matrix(rep(0,iter*K),nrow=iter)
   tau.store=matrix(rep(1,iter*K),nrow=iter)
   w.store = rep(0,iter)
@@ -76,26 +77,42 @@ BVVA2 <- function(iter = 1000, X, y, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2 =
     }
     
     #step 3
+    if (n >= K) {
     E        = diag(1/sigma)
     TXE      = t(X) %*% E #efficiency 
     try(variance <- solve(TXE %*% X + diag(1/big_gamma) )) #efficiency
     mu       = variance %*%  (TXE %*% Y_Star)
     beta = MASS::mvrnorm(1, mu, variance)
+    } else {
+    u = rnorm(K, 0, sqrt(big_gamma))
+    delta = rnorm(n)
+    E_vec = sqrt(1/sigma)
+    Phi = t(t(X) * outer(rep.int(1L, ncol(X)), E_vec))
+    GPhi = t(Phi * outer(rep.int(1L, nrow(Phi)), big_gamma))
+    aalpha = E_vec * Y_Star
+    v = Phi %*% u + delta
+    ww = solve(Phi %*% GPhi + diag(n), aalpha - v)
+    beta = u + GPhi %*% ww
+    }
     
-    
-    for (k in  1:K) 
-    {
+    # for (k in  1:K) 
+    loop_fun = function(beta, I){
     
       #step 4
-      tau[k] = 1/ (rgamma(n = 1, shape = a1 + 0.5 , rate = a2 + (beta[k]^2/(2 * I[k]) )))    
+      tau = 1/ (rgamma(n = 1, shape = a1 + 0.5 , rate = a2 + (beta^2/(2 * I) )))    
 
       #step 5
-      w1 = (1 - w) * v_0^(-0.5) * exp(-1 * (beta[k]^2 / (2 * v_0 * tau[k])) ) 
-      w2 = w * exp(-1 * (beta[k]^2 / (2 * tau[k])) )
-      I[k] = sample(c(v_0, 1), 1, prob=c(w1,w2))     
+      w1 = (1 - w) * v_0^(-0.5) * exp(-1 * (beta^2 / (2 * v_0 * tau)) ) 
+      w2 = w * exp(-1 * (beta^2 / (2 * tau)) )
+      I = sample(c(v_0, 1), 1, prob=c(w1,w2))     
 
-      w2.store[i, k] = w2/(w1+w2)
+      w2s = w2/(w1+w2)
+      return(c(I, tau, w2s))
     }
+    Itw2 = mapply(loop_fun, beta, I)
+    I = Itw2[1,]
+    tau = Itw2[2,]
+    w2.store[i,] = Itw2[3,]
     
     #step 6
     w = rbeta(1 , 1 + sum(I == 1), 1 + sum(I == v_0)  )
@@ -142,14 +159,18 @@ BVVA2 <- function(iter = 1000, X, y, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2 =
     }
         
     # Set new value of Big_ This hypervariance shrinks betas
-    big_gamma = I * tau
+    big_gamma = ifelse(is.infinite(I * tau), big_gamma, I*tau)
     
     #step 7
     # As alpha_x increases the scale decreases of the gamma which increases alpha value
-    alpha_x = rbeta(1, alpha, n)  
-    alpha = rgamma(1, d1 + M, rate = (d2 - log(alpha_x)) )
+    alpha_x = rbeta(1, alpha+1, n)
+    aw1 = d1 + K + 1
+    aw2 = n * (d2 - log(alpha_x))
+    a_extra = rbinom(1, 1, aw2 / (aw2 + aw1))  
+    alpha = rgamma(1, d1 + M + a_extra, rate = (d2 - log(alpha_x)) )
     
     # store results of this iteration
+    c.store[i,] = sapply(customer, function(x) which(x == tables))
     alpha.store[i] = alpha
     beta.store[i,] = beta
     sigma.store[i,] = sigma
@@ -158,6 +179,6 @@ BVVA2 <- function(iter = 1000, X, y, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2 =
     tau.store[i,]  = tau
     w.store[i]     = w
   }
-  return(list('w'=w.store,'alpha'=alpha.store,'beta'=beta.store,'I'=I.store,'tau'=tau.store,'sigma'=sigma.store,'K'=K.store, 'w2'=w2.store))
+  return(list('c'=c.store, 'w'=w.store,'alpha'=alpha.store,'beta'=beta.store,'I'=I.store,'tau'=tau.store,'sigma'=sigma.store,'K'=K.store, 'w2'=w2.store))
 
 }

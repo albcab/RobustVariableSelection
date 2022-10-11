@@ -9,7 +9,7 @@ counts = function(full, uniques)
     return(n)
 }
 
-hBVVA2 <- function(iter = 1000, X, y, v, b1 = 1, b2 = 20, d1, d2, verbose=FALSE, scaling = TRUE){
+hBVVA2 <- function(iter = 1000, X, y, v=2, b1 = 1, b2 = 20, d1, d2, verbose=FALSE, scaling = TRUE){
   
   if(missing(X)) {
     stop('The X Parameter has not been supplied')
@@ -51,6 +51,7 @@ hBVVA2 <- function(iter = 1000, X, y, v, b1 = 1, b2 = 20, d1, d2, verbose=FALSE,
   lambda.store=matrix(ncol = K, nrow = iter)
   tau.store=rep(0,iter)
   w.store = rep(0,iter)
+  v.store = rep(0,iter)
   K.store = w.store;  alpha.store = w.store;  max.variance = w.store; max.mu = w.store
   
   #Conentration parameter for DP
@@ -73,30 +74,43 @@ hBVVA2 <- function(iter = 1000, X, y, v, b1 = 1, b2 = 20, d1, d2, verbose=FALSE,
       print(paste(c,'%'))
       c = c+10
     }
-    
+
     #step 3
+    if (n >= K) {
     E        = diag(G)
     TXE      = t(X) %*% E #efficiency 
-    # try(variance <- solve(TXE %*% X + diag((1/big_gamma)) )) #efficiency
-    try(variance <- solve(tau*TXE %*% X + diag((1/lambda)) ))
-    mu       = variance %*%  (TXE %*% Y_Star) * tau
-    # mu       = variance %*%  (TXE %*% Y_Star)
-    # beta = MASS::mvrnorm(1, mu, variance)
-    beta = MASS::mvrnorm(1, mu, tau*variance)
+    try(variance <- solve(TXE %*% X + diag((1/big_gamma)) )) #efficiency 
+    mu       = variance %*%  (TXE %*% Y_Star)
+    beta = MASS::mvrnorm(1, mu, variance)
+    } else {
+    u = rnorm(K, 0, sqrt(big_gamma))
+    delta = rnorm(n)
+    E_vec = sqrt(G)
+    Phi = t(t(X) * outer(rep.int(1L, ncol(X)), E_vec))
+    GPhi = t(Phi * outer(rep.int(1L, nrow(Phi)), big_gamma))
+    aalpha = E_vec * Y_Star
+    vv = Phi %*% u + delta
+    ww = solve(Phi %*% GPhi + diag(n), aalpha - vv)
+    beta = u + GPhi %*% ww
+    }
     
     #resample tau
     xi = 1/rgamma(1, 1, rate = 1 + 1/tau)
     tau = 1/rgamma(1, (K+1)/2, rate = 1/xi + 1/2*sum(beta^2/lambda))
     
     # Resample lambda
-    for (k in  1:K) 
-    {
-        vj = 1/rgamma(1, 1, rate = 1 + 1/lambda[k])
-        lambda[k] = 1/rgamma(1, 1, rate = 1/vj + beta[k]^2/(2*tau))
+    # for (k in  1:K) 
+    loop_fun = function(lambda, beta) {
+        vj = 1/rgamma(1, 1, rate = 1 + 1/lambda)
+        lambda = 1/rgamma(1, 1, rate = 1/vj + beta^2/(2*tau))
+        return(lambda)
     }
+    lambda = mapply(loop_fun, lambda, beta)
     
     #step 1
     prob.new = alpha * (v/2)^(v/2)/gamma(v/2) * G^(v/2-1) * b2^b1/gamma(b1) * gamma(b1+v/2)/( (b2+v*G/2)^(b1+v/2) )
+    # log_prob.new = (v/2) * log(v/2) - lgamma(v/2) + (v/2-1) * log(G) + b1 * log(b2) - lgamma(b1) + lgamma(b1 + v/2) - (b1 + v/2) * log(b2 + v*G/2)
+    # prob.new = alpha * exp(log_prob.new)
     for (j in 1:n)
     {
       which_table = which(customer[j] == tables)
@@ -136,14 +150,26 @@ hBVVA2 <- function(iter = 1000, X, y, v, b1 = 1, b2 = 20, d1, d2, verbose=FALSE,
     #step 0
     square.diff = (Y_Star - (X %*% beta))^2
     G = rgamma(n, (v+1)/2, (square.diff + v*sigma)/2)
+
+    # #Find v
+    # delta = sum((Y_Star - X %*% beta) ^ 2 / sigma)
+    # v_fn = function(v) {
+    #   v = exp(v)
+    #   w = (v + n) / (v + delta)
+    #   return(1 - digamma(v/2) + log(v/2) + log(w) - w + digamma((v+n)/2) - log((v+n) / 2))
+    # }
+    # v = exp(uniroot(v_fn, lower=log(1e-6), upper=log(20), extendInt="yes")$root)
         
     # Set new value of Big_ This hypervariance shrinks betas
-    # big_gamma = tau * lambda
+    big_gamma = tau * lambda
     
     #step 7
     # As alpha_x increases the scale decreases of the gamma which increases alpha value
-    alpha_x = rbeta(1, alpha, n)  
-    alpha = rgamma(1, d1 + M, rate = (d2 - log(alpha_x)) )
+    alpha_x = rbeta(1, alpha+1, n)
+    aw1 = d1 + K + 1
+    aw2 = n * (d2 - log(alpha_x))
+    a_extra = rbinom(1, 1, aw2 / (aw2 + aw1))  
+    alpha = rgamma(1, d1 + M + a_extra, rate = (d2 - log(alpha_x)) )
     
     # store results of this iteration
     alpha.store[i] = alpha
@@ -153,7 +179,8 @@ hBVVA2 <- function(iter = 1000, X, y, v, b1 = 1, b2 = 20, d1, d2, verbose=FALSE,
     K.store[i] = M
     tau.store[i]  = tau
     lambda.store[i,] = lambda
+    v.store[i] = v
   }
   
-  return(list('alpha'=alpha.store,'beta'=beta.store,'lambda'=lambda.store,'tau'=tau.store,'sigma'=sigma.store,'K'=K.store, 'G' = G.store))
+  return(list('alpha'=alpha.store,'beta'=beta.store,'lambda'=lambda.store,'tau'=tau.store,'sigma'=sigma.store,'K'=K.store, 'G' = G.store, 'v'=v.store))
 }

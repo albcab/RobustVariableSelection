@@ -34,8 +34,8 @@ hBVVA2 <- function(iter = 1000, X, y, b1 = 1, b2 = 20, d1, d2, verbose=FALSE, sc
   
   if (scaling)
     X = scale(X, scale = FALSE)
-  else
-    X <- scale(X)
+  # else
+  #   X <- scale(X)
   
   XX = t(X) %*% X
   
@@ -46,6 +46,7 @@ hBVVA2 <- function(iter = 1000, X, y, b1 = 1, b2 = 20, d1, d2, verbose=FALSE, sc
   # set space to store the results
   beta.store=matrix(rep(0,iter*K),nrow=iter)
   sigma.store = matrix(rep(0,iter*n),nrow=iter)
+  c.store = sigma.store
   lambda.store=matrix(ncol = K, nrow = iter)
   tau.store=rep(0,iter)
   w.store = rep(0,iter)
@@ -73,25 +74,39 @@ hBVVA2 <- function(iter = 1000, X, y, b1 = 1, b2 = 20, d1, d2, verbose=FALSE, sc
     }
     
     #step 3
+    if (n >= K) {
     E        = diag(1/sigma)
     TXE      = t(X) %*% E #efficiency 
-    # try(variance <- solve(TXE %*% X + diag((1/big_gamma)) )) #efficiency
-    try(variance <- solve(tau*TXE %*% X + diag((1/lambda)) ))
-    mu       = variance %*%  (TXE %*% Y_Star) * tau
-    # mu       = variance %*%  (TXE %*% Y_Star)
-    # beta = MASS::mvrnorm(1, mu, variance)
-    beta = MASS::mvrnorm(1, mu, tau*variance)
-    
+    try(variance <- solve(TXE %*% X + diag((1/big_gamma)) )) #efficiency 
+    # try(variance <- solve(tau*TXE %*% X + diag((1/lambda)) ))
+    # mu       = variance %*%  (TXE %*% Y_Star) * tau
+    mu       = variance %*%  (TXE %*% Y_Star)
+    beta = MASS::mvrnorm(1, mu, variance)
+    # beta = MASS::mvrnorm(1, mu, tau*variance)
+    } else {
+    u = rnorm(K, 0, sqrt(big_gamma))
+    delta = rnorm(n)
+    E_vec = sqrt(1/sigma)
+    Phi = t(t(X) * outer(rep.int(1L, ncol(X)), E_vec))
+    GPhi = t(Phi * outer(rep.int(1L, nrow(Phi)), big_gamma))
+    aalpha = E_vec * Y_Star
+    v = Phi %*% u + delta
+    ww = solve(Phi %*% GPhi + diag(n), aalpha - v)
+    beta = u + GPhi %*% ww
+    }
+
     #resample tau
     xi = 1/rgamma(1, 1, rate = 1 + 1/tau)
     tau = 1/rgamma(1, (K+1)/2, rate = 1/xi + 1/2*sum(beta^2/lambda))
     
     # Resample lambda
-    for (k in  1:K) 
-    {
-        vj = 1/rgamma(1, 1, rate = 1 + 1/lambda[k])
-        lambda[k] = 1/rgamma(1, 1, rate = 1/vj + beta[k]^2/(2*tau))
+    # for (k in  1:K) 
+    loop_fun = function(lambda, beta) {
+        vj = 1/rgamma(1, 1, rate = 1 + 1/lambda)
+        lambda = 1/rgamma(1, 1, rate = 1/vj + beta^2/(2*tau))
+        return(lambda)
     }
+    lambda = mapply(loop_fun, lambda, beta)
     
     #step 1
     square.diff = (Y_Star - (X %*% beta))^2
@@ -135,14 +150,18 @@ hBVVA2 <- function(iter = 1000, X, y, b1 = 1, b2 = 20, d1, d2, verbose=FALSE, sc
     }
         
     # Set new value of Big_ This hypervariance shrinks betas
-    # big_gamma = tau * lambda
+    big_gamma = ifelse(is.infinite(lambda * tau), big_gamma, lambda*tau)
     
     #step 7
     # As alpha_x increases the scale decreases of the gamma which increases alpha value
-    alpha_x = rbeta(1, alpha, n)  
-    alpha = rgamma(1, d1 + M, rate = (d2 - log(alpha_x)) )
+    alpha_x = rbeta(1, alpha+1, n)
+    aw1 = d1 + K + 1
+    aw2 = n * (d2 - log(alpha_x))
+    a_extra = rbinom(1, 1, aw2 / (aw2 + aw1))  
+    alpha = rgamma(1, d1 + M + a_extra, rate = (d2 - log(alpha_x)) )
     
     # store results of this iteration
+    c.store[i,] = sapply(customer, function(x) which(x == tables))
     alpha.store[i] = alpha
     beta.store[i,] = beta
     sigma.store[i,] = sigma
@@ -151,5 +170,5 @@ hBVVA2 <- function(iter = 1000, X, y, b1 = 1, b2 = 20, d1, d2, verbose=FALSE, sc
     lambda.store[i,] = lambda
   }
   
-  return(list('alpha'=alpha.store,'beta'=beta.store,'lambda'=lambda.store,'tau'=tau.store,'sigma'=sigma.store,'K'=K.store))
+  return(list('c'=c.store,'alpha'=alpha.store,'beta'=beta.store,'lambda'=lambda.store,'tau'=tau.store,'sigma'=sigma.store,'K'=K.store))
 }

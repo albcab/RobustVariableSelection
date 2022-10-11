@@ -1,6 +1,6 @@
 # JUST SVSS
 
-SVSS <- function(iter = 1000, X, y, v, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2 = 20, verbose=FALSE, scaling = TRUE){
+SVSS <- function(iter = 1000, X, y, v=2, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2 = 20, verbose=FALSE, scaling = TRUE){
   if(missing(X)) {
     stop('The X Parameter has not been supplied')
   }
@@ -37,6 +37,7 @@ SVSS <- function(iter = 1000, X, y, v, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2
   I.store=matrix(rep(0,iter*K),nrow=iter)
   tau.store=matrix(rep(0,iter*K),nrow=iter)
   w.store=rep(0,iter)
+  v.store = w.store
   w2.store = matrix(nrow = iter, ncol = K)
   sigma.store=rep(0,iter)
   G.store=rep(0,iter)
@@ -47,12 +48,20 @@ SVSS <- function(iter = 1000, X, y, v, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2
       print(paste(c,'%'))
       c = c+10
     }
-    
-    #Resample Beta   
+
+    # Resample Beta 
+    if (n >= K) {  
     try(variance <-  solve(t(X) %*% X  + 1/G * diag(1/big_gamma))) #more efficient, took out n 
     mu = variance %*% t(X) %*% Y_Star
     beta = MASS::mvrnorm(1, mu, 1/G*variance) #added sigma multiplication
-    
+    } else {
+    u = rnorm(K, 0, sqrt(big_gamma))
+    delta = rnorm(n)
+    vv = (X*sqrt(G)) %*% u + delta
+    GX = t(X*sqrt(G) * outer(rep.int(1L, nrow(X)), big_gamma))
+    ww = solve((X*sqrt(G)) %*% GX + diag(n), Y_Star*sqrt(G) - vv)
+    beta = u + GX %*% ww
+    }
     # Resample I and tau
     for (k in  1:K) 
     {
@@ -77,6 +86,15 @@ SVSS <- function(iter = 1000, X, y, v, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2
     # Resample sigma
     sigma = rgamma(1, b1 + (v/2), rate =  b2 + (v*G/2))
     G = rgamma(1, (v+n)/2, (sum((Y_Star - (X %*% beta ))^2) + v*sigma)/2)
+
+    # #Find v
+    # delta = sum((Y_Star - X %*% beta) ^ 2) / sigma
+    # v_fn = function(v) {
+    #   v = exp(v)
+    #   w = (v + n) / (v + delta)
+    #   return(1 - digamma(v/2) + log(v/2) + log(w) - w + digamma((v+n)/2) - log((v+n) / 2))
+    # }
+    # v = exp(uniroot(v_fn, lower=log(1e-6), upper=log(20), extendInt="yes")$root)
     
     # Set new value of Big_
     big_gamma = I * tau
@@ -88,7 +106,8 @@ SVSS <- function(iter = 1000, X, y, v, v_0 = 0.0001, a1 = 5, a2 = 50, b1 = 1, b2
     w.store[i]    = w
     sigma.store[i]= sigma
     G.store[i] = G
+    v.store[i] = v
   }
   
-  return(list('beta'=beta.store, 'I'=I.store, 'tau'=tau.store, 'w'=w.store, 'sigma'=sigma.store, 'w2'=w2.store, "G" = G.store))
+  return(list('beta'=beta.store, 'I'=I.store, 'tau'=tau.store, 'w'=w.store, 'sigma'=sigma.store, 'w2'=w2.store, "G" = G.store, 'v'=v.store))
 }
